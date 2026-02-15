@@ -5,9 +5,20 @@ function displayMessage(userInput) {
   document.getElementById("output").textContent = userInput;
 }
 
-// VULNERABILITY: eval with user input
+// Safe: only allow numbers and basic math operators
 function calculate(expression) {
-  return eval(expression);
+  // Whitelist: only digits, operators, parentheses, decimal points, and spaces
+  const safePattern = /^[\d+\-*/().\s]+$/;
+  if (!safePattern.test(expression)) {
+    return "Error: Invalid characters";
+  }
+  try {
+    // Use Function constructor with validated input (safer than eval)
+    const result = new Function(`return (${expression})`)();
+    return isFinite(result) ? result : "Error: Invalid expression";
+  } catch {
+    return "Error: Invalid expression";
+  }
 }
 
 // Wire up the poll form
