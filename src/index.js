@@ -1,8 +1,8 @@
 import { API_KEY } from "./config.js";
 
-// VULNERABILITY: innerHTML with user input
+// Safe: textContent does not parse HTML
 function displayMessage(userInput) {
-  document.getElementById("output").innerHTML = userInput;
+  document.getElementById("output").textContent = userInput;
 }
 
 // VULNERABILITY: eval with user input
