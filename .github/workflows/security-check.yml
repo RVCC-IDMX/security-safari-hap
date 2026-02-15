@@ -1,0 +1,137 @@
+name: Security Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run security checks
+        id: security
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Track findings
+          ISSUES_FOUND=0
+          ISSUES_FIXED=0
+
+          # Check 1: npm audit
+          echo "### Dependency vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          if npm audit --audit-level=moderate 2>&1 | grep -q "found 0 vulnerabilities"; then
+            echo "✅ No dependency vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FIXED++))
+          else
+            echo "⚠️ Dependency vulnerabilities detected:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            npm audit --audit-level=moderate 2>&1 | head -20 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FOUND++))
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check 2: innerHTML usage
+          echo "### XSS vulnerabilities (innerHTML)" >> $GITHUB_STEP_SUMMARY
+          if grep -r "innerHTML" src/ 2>/dev/null | grep -v "textContent"; then
+            echo "⚠️ Found innerHTML usage in src/:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -rn "innerHTML" src/ >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FOUND++))
+          else
+            echo "✅ No innerHTML usage found" >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FIXED++))
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check 3: eval usage
+          echo "### Code injection (eval)" >> $GITHUB_STEP_SUMMARY
+          if grep -r "eval(" src/ 2>/dev/null; then
+            echo "⚠️ Found eval() usage in src/:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -rn "eval(" src/ >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FOUND++))
+          else
+            echo "✅ No eval() usage found" >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FIXED++))
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check 4: Hardcoded secrets
+          echo "### Hardcoded secrets" >> $GITHUB_STEP_SUMMARY
+          if grep -rE "(sk_live|api_key|API_KEY.*=.*['\"][a-zA-Z0-9]{10,})" src/ 2>/dev/null | grep -v "import.meta.env"; then
+            echo "⚠️ Possible hardcoded secrets found:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -rnE "(sk_live|api_key|API_KEY.*=.*['\"][a-zA-Z0-9]{10,})" src/ | grep -v "import.meta.env" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FOUND++))
+          else
+            echo "✅ No hardcoded secrets detected" >> $GITHUB_STEP_SUMMARY
+            ((ISSUES_FIXED++))
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Summary
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "### Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Issues remaining:** $ISSUES_FOUND" >> $GITHUB_STEP_SUMMARY
+          echo "- **Issues fixed:** $ISSUES_FIXED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ $ISSUES_FOUND -eq 0 ]; then
+            echo "🎉 **All security checks passed!**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🔍 **$ISSUES_FOUND issue(s) still need attention.**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Save for comment
+          echo "issues_found=$ISSUES_FOUND" >> $GITHUB_OUTPUT
+          echo "issues_fixed=$ISSUES_FIXED" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issuesFound = '${{ steps.security.outputs.issues_found }}';
+            const issuesFixed = '${{ steps.security.outputs.issues_fixed }}';
+
+            let status = issuesFound === '0'
+              ? '🎉 All security checks passed!'
+              : `🔍 ${issuesFound} issue(s) remaining, ${issuesFixed} fixed`;
+
+            const body = `## Security Scan Results
+
+            ${status}
+
+            See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+
+            **Checks performed:**
+            - Dependency vulnerabilities (npm audit)
+            - XSS vulnerabilities (innerHTML)
+            - Code injection (eval)
+            - Hardcoded secrets
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
